@@ -323,7 +323,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Noto Sans
     <div class="result-preview" id="resultPreview"></div>
     <div class="form-field">
       <div class="form-label">Google Form URL（formResponse 結尾）</div>
-      <input type="url" class="form-input" id="gformUrl" placeholder="https://docs.google.com/forms/d/e/xxx/formResponse">
+      <input type="url" class="form-input" id="gformUrl" value="https://docs.google.com/forms/d/e/1FAIpQLSfdUxdFUvImMCnu19S6znusw3ZNdUvdv_yxMgPQDjXCEhzggw/formResponse">
       <div class="form-hint">請先在 Google Forms 建立好欄位並開啟接受回應</div>
     </div>
     <div id="fieldMapSection">
@@ -1004,6 +1004,17 @@ function openModal(id) {
     ['各維度', dimsStr], ['KPI', kpisStr], ['評語', r.overallComment||'（無）'],
   ].map(([k,v])=>`<div class="rrow"><span class="rkey">${k}</span><span class="rval" style="text-align:right;max-width:280px;font-size:11px;">${v}</span></div>`).join('');
 
+  const ENTRY_IDS = {
+    cycle:   'entry.1653745262',
+    name:    'entry.784565428',
+    role:    'entry.447629184',
+    score:   'entry.1450171008',
+    grade:   'entry.1028746996',
+    coeff:   'entry.1499007150',
+    dims:    'entry.1335379916',
+    kpis:    'entry.1648617459',
+    comment: 'entry.769338997',
+  };
   const fields = [
     {key:'cycle',label:'考核周期',val:state.cycle},
     {key:'name',label:'姓名',val:nm},
@@ -1018,7 +1029,7 @@ function openModal(id) {
   document.getElementById('fieldMaps').innerHTML = fields.map(f=>`
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
       <span style="min-width:90px;font-size:12px;color:var(--text-sub);">${f.label}</span>
-      <input type="text" class="form-input" style="flex:1;font-size:12px;" placeholder="entry.XXXXXXXXX" id="ef_${f.key}">
+      <input type="text" class="form-input" style="flex:1;font-size:12px;" id="ef_${f.key}" value="${ENTRY_IDS[f.key]}">
     </div>
   `).join('');
 
