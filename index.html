@@ -207,6 +207,7 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Noto Sans
       <button onclick="confirmCustomCycle()" style="font-size:12px;padding:5px 10px;border-radius:6px;border:none;background:var(--purple);color:#fff;cursor:pointer;font-family:inherit;font-weight:600;">確認</button>
       <button onclick="cancelCustomCycle()" style="font-size:12px;padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-sub);cursor:pointer;font-family:inherit;">✕</button>
     </div>
+    <button onclick="resetAll()" title="清除所有評核資料並移除支援成員，重新開始" style="font-size:12px;font-weight:600;padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-sub);cursor:pointer;font-family:inherit;transition:all .12s;" onmouseover="this.style.background='var(--red-bg)';this.style.color='var(--red)';this.style.borderColor='var(--red-bg)';" onmouseout="this.style.background='var(--surface)';this.style.color='var(--text-sub)';this.style.borderColor='var(--border)';">🔄 重新開始</button>
     <span class="cycle-badge" id="cycleBadge">V1 · 2025 Q2</span>
   </div>
 </div>
@@ -216,8 +217,11 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Noto Sans
   <div class="app-layout">
     <!-- Sidebar -->
     <div class="sidebar">
-      <div class="sidebar-label">Squad 成員</div>
+      <div class="sidebar-label" id="squadLabel">Squad 成員</div>
       <div id="memberList"></div>
+      <div class="add-btn-wrap">
+        <button class="add-btn" onclick="openMemberModal()">＋ 新增 Squad 成員</button>
+      </div>
       <div class="sdivider"></div>
       <div class="sidebar-label" style="margin-top:4px;">核心通用組（臨時支援）</div>
       <div id="supportList"></div>
@@ -315,6 +319,34 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Noto Sans
 <!-- Toast -->
 <div class="toast" id="toast"><span id="toastIcon"></span><span id="toastMsg"></span></div>
 
+<!-- Member Add/Edit Modal -->
+<div class="modal-overlay" id="memberModalOverlay" onclick="if(event.target===this)closeMemberModal();">
+  <div class="modal" style="width:420px;">
+    <div class="modal-title" id="memberModalTitle">➕ 新增 Squad 成員</div>
+    <div class="modal-sub" id="memberModalSub">填寫成員資訊，加入績效評核名單</div>
+    <div class="form-field">
+      <div class="form-label">姓名</div>
+      <input type="text" class="form-input" id="mf_name" placeholder="例：王小明 / Alex Chen"
+        onkeydown="if(event.key==='Enter')saveMemberModal();if(event.key==='Escape')closeMemberModal();">
+    </div>
+    <div class="form-field">
+      <div class="form-label">角色 / 職稱</div>
+      <input type="text" class="form-input" id="mf_role" placeholder="例：後端工程師 / QA / PM"
+        onkeydown="if(event.key==='Enter')saveMemberModal();if(event.key==='Escape')closeMemberModal();">
+    </div>
+    <div class="form-field">
+      <div class="form-label">基礎權重（%）</div>
+      <input type="number" class="form-input" id="mf_weight" min="0" max="100" step="1" value="15"
+        onkeydown="if(event.key==='Enter')saveMemberModal();if(event.key==='Escape')closeMemberModal();">
+      <div class="form-hint" id="mf_weightHint">其他成員權重合計：—</div>
+    </div>
+    <div class="btn-row" style="margin-bottom:0;">
+      <button class="btn btn-primary" id="mf_saveBtn" onclick="saveMemberModal()">新增 ✓</button>
+      <button class="btn btn-ghost" onclick="closeMemberModal()">取消</button>
+    </div>
+  </div>
+</div>
+
 <!-- Submit Modal -->
 <div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeModal();">
   <div class="modal">
@@ -343,15 +375,37 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Noto Sans
 
 <script>
 // ── DATA ──────────────────────────────────────────────────
-const MEMBERS = [
-  { id:'sm',     name:'Jason Lee', role:'Squad Master', weight:20, avatar:'JL', color:'#EEEDFE', tc:'#3C3489' },
-  { id:'be1',   name:'秉洋',       role:'後端工程師',   weight:18, avatar:'BY', color:'#E1F5EE', tc:'#085041' },
-  { id:'be2',   name:'Martin',     role:'後端工程師',   weight:18, avatar:'MA', color:'#E1F5EE', tc:'#085041' },
-  { id:'qf',    name:'Adalyn Wu',  role:'QA 兼前端',    weight:18, avatar:'AW', color:'#FAEEDA', tc:'#633806' },
-  { id:'pm',    name:'Zooey',      role:'PM',           weight:14, avatar:'ZO', color:'#E6F1FB', tc:'#0C447C' },
-  { id:'devops',name:'DevOps',     role:'DevOps',       weight:10, avatar:'DO', color:'#EAF3DE', tc:'#27500A' },
+// 頭像配色調色盤（新增成員時依序套用）
+const MEMBER_PALETTE = [
+  { color:'#EEEDFE', tc:'#3C3489', bar:'#534AB7' },
+  { color:'#E1F5EE', tc:'#085041', bar:'#0F6E56' },
+  { color:'#E6F1FB', tc:'#0C447C', bar:'#185FA5' },
+  { color:'#FAEEDA', tc:'#633806', bar:'#BA7517' },
+  { color:'#EAF3DE', tc:'#27500A', bar:'#3B6D11' },
+  { color:'#FCEBEB', tc:'#791F1F', bar:'#A32D2D' },
+  { color:'#E1F5EE', tc:'#085041', bar:'#1D9E75' },
 ];
-// 核心合計 98%，預留 2% 給支援人員
+
+// 依姓名自動產生頭像縮寫（中文取前兩字，英文取首字母）
+function deriveAvatar(name) {
+  if (!name) return 'CX';
+  const t = name.trim();
+  if (/[\u4e00-\u9fff]/.test(t)) return t.slice(0,2);
+  const parts = t.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return t.slice(0,2).toUpperCase();
+}
+
+const DEFAULT_MEMBERS = [
+  { id:'sm',     name:'Jason Lee', role:'Squad Master', weight:20, avatar:'JL', color:'#EEEDFE', tc:'#3C3489', bar:'#534AB7' },
+  { id:'be1',    name:'秉洋',       role:'後端工程師',   weight:18, avatar:'BY', color:'#E1F5EE', tc:'#085041', bar:'#0F6E56' },
+  { id:'be2',    name:'Martin',     role:'後端工程師',   weight:18, avatar:'MA', color:'#E1F5EE', tc:'#085041', bar:'#1D9E75' },
+  { id:'qf',     name:'Adalyn Wu',  role:'QA 兼前端',    weight:18, avatar:'AW', color:'#FAEEDA', tc:'#633806', bar:'#BA7517' },
+  { id:'pm',     name:'Zooey',      role:'PM',           weight:14, avatar:'ZO', color:'#E6F1FB', tc:'#0C447C', bar:'#185FA5' },
+  { id:'devops', name:'DevOps',     role:'DevOps',       weight:10, avatar:'DO', color:'#EAF3DE', tc:'#27500A', bar:'#3B6D11' },
+];
+// 核心預設合計 98%，預留 2% 給支援人員（可自由新增/刪除成員、調整權重）
+let MEMBERS = JSON.parse(JSON.stringify(DEFAULT_MEMBERS));
 
 const ROLE_KPI = {
   sm:     ['外部合作夥伴關係維護（Maxi/七月App/東東）','里程碑推進率','跨部門協調效率'],
@@ -455,6 +509,10 @@ function cancelCustomCycle() {
 
 // ── SIDEBAR ───────────────────────────────────────────────
 function renderSidebar() {
+  // 權重合計提示
+  const total = MEMBERS.reduce((s,m)=>s+(Number(m.weight)||0), 0);
+  const lbl = document.getElementById('squadLabel');
+  if (lbl) lbl.textContent = `Squad 成員 · 合計 ${total}%`;
   // Core members
   const ml = document.getElementById('memberList');
   ml.innerHTML = '';
@@ -548,6 +606,100 @@ function removeSupportMember(id) {
   showToast('🗑', '已移除');
 }
 
+// ── CORE (SQUAD) MEMBER MANAGEMENT ────────────────────────
+function openMemberModal(id) {
+  const ov = document.getElementById('memberModalOverlay');
+  ov.dataset.editId = id || '';
+  const m = id ? MEMBERS.find(x => x.id === id) : null;
+  document.getElementById('memberModalTitle').textContent = m ? '✏️ 編輯成員' : '➕ 新增 Squad 成員';
+  document.getElementById('memberModalSub').textContent   = m ? '修改成員的姓名、角色與權重' : '填寫成員資訊，加入績效評核名單';
+  document.getElementById('mf_name').value   = m ? m.name : '';
+  document.getElementById('mf_role').value   = m ? m.role : '';
+  document.getElementById('mf_weight').value = m ? m.weight : 15;
+  document.getElementById('mf_saveBtn').textContent = m ? '儲存 ✓' : '新增 ✓';
+  const others = MEMBERS.reduce((s,x)=>s+(x.id===id?0:(Number(x.weight)||0)), 0);
+  document.getElementById('mf_weightHint').textContent =
+    `其他成員權重合計：${others}%（含此人建議控制在約 98%，預留 2% 給支援組）`;
+  ov.classList.add('show');
+  setTimeout(()=>document.getElementById('mf_name').focus(), 50);
+}
+
+function closeMemberModal() {
+  document.getElementById('memberModalOverlay').classList.remove('show');
+}
+
+function saveMemberModal() {
+  const ov = document.getElementById('memberModalOverlay');
+  const editId = ov.dataset.editId;
+  const name = document.getElementById('mf_name').value.trim();
+  const role = document.getElementById('mf_role').value.trim() || '成員';
+  const weight = Math.max(0, Math.round(Number(document.getElementById('mf_weight').value) || 0));
+  if (!name) { alert('請輸入姓名'); document.getElementById('mf_name').focus(); return; }
+
+  if (editId) {
+    const m = MEMBERS.find(x => x.id === editId);
+    if (m) { m.name = name; m.role = role; m.weight = weight; m.avatar = deriveAvatar(name); }
+    closeMemberModal();
+    saveState();
+    renderSidebar();
+    if (state.current === editId) renderCoreMain(editId);
+    showToast('✏️', '成員已更新');
+  } else {
+    const pal = MEMBER_PALETTE[MEMBERS.length % MEMBER_PALETTE.length];
+    const id = 'm_' + Date.now();
+    MEMBERS.push({ id, name, role, weight, avatar: deriveAvatar(name), color: pal.color, tc: pal.tc, bar: pal.bar });
+    closeMemberModal();
+    saveState();
+    renderSidebar();
+    selectMember(id);
+    showToast('➕', `已新增 ${name}`);
+  }
+}
+
+function removeCoreMember(id) {
+  const m = MEMBERS.find(x => x.id === id);
+  if (!confirm(`確定刪除 Squad 成員「${m?.name || id}」？\n其評核資料也會一併刪除（此操作無法復原）。`)) return;
+  MEMBERS = MEMBERS.filter(x => x.id !== id);
+  delete state.reviews[id];
+  if (state.current === id) {
+    state.current = null;
+    document.getElementById('mainContent').innerHTML =
+      `<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-title">選擇左側成員開始評核</div><div style="font-size:13px;">從側欄選擇要進行 1 on 1 的成員</div></div>`;
+  }
+  saveState();
+  renderSidebar();
+  showToast('🗑', '成員已刪除');
+}
+
+// ── GLOBAL RESET ──────────────────────────────────────────
+function resetAll() {
+  if (!confirm('確定要「重新開始」？\n\n• 清空所有成員的維度評分、KPI 與評語\n• 移除所有臨時支援成員\n• Squad 成員名單會保留（如需復原預設名單，請按取消後改用下方說明）\n\n此操作無法復原。')) return;
+  state.reviews = {};
+  state.supportMembers = [];
+  state.current = null;
+  saveState();
+  renderSidebar();
+  document.getElementById('mainContent').innerHTML =
+    `<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-title">選擇左側成員開始評核</div><div style="font-size:13px;">從側欄選擇要進行 1 on 1 的成員</div></div>`;
+  if (document.getElementById('bonusView').style.display !== 'none') calcBonus();
+  showToast('🔄', '已重設，可重新開始');
+}
+
+// 還原預設 Squad 名單（可在 console 呼叫，或日後接 UI）
+function restoreDefaultMembers() {
+  if (!confirm('將 Squad 成員名單還原為預設 6 人？\n（不影響支援成員，但會清除目前名單上的評核資料）')) return;
+  MEMBERS = JSON.parse(JSON.stringify(DEFAULT_MEMBERS));
+  // 清除已不存在成員的評核資料
+  const validIds = new Set([...MEMBERS.map(m=>m.id), ...state.supportMembers.map(s=>s.id)]);
+  Object.keys(state.reviews).forEach(k => { if (!validIds.has(k)) delete state.reviews[k]; });
+  state.current = null;
+  saveState();
+  renderSidebar();
+  document.getElementById('mainContent').innerHTML =
+    `<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-title">選擇左側成員開始評核</div></div>`;
+  showToast('↩️', '已還原預設名單');
+}
+
 // ── SELECT MEMBER ─────────────────────────────────────────
 function selectMember(id) {
   state.current = id;
@@ -575,7 +727,10 @@ function renderCoreMain(id) {
     <div class="mhdr">
       <div class="avatar mhdr-avatar" style="background:${m.color};color:${m.tc}">${m.avatar}</div>
       <div class="mhdr-info">
-        <div class="mhdr-name">${m.name}</div>
+        <div class="mhdr-name">
+          ${m.name}
+          <button onclick="openMemberModal('${id}')" style="font-size:11px;padding:3px 10px;border:1px solid var(--border);border-radius:5px;background:transparent;cursor:pointer;color:var(--text-sub);font-family:inherit;">✏️ 編輯</button>
+        </div>
         <div class="mhdr-meta">
           <span class="meta-tag">${m.role}</span>
           <span class="meta-tag">基礎權重 ${m.weight}%</span>
@@ -620,7 +775,8 @@ function renderCoreMain(id) {
     <div class="btn-row">
       <button class="btn btn-primary" onclick="openModal('${id}')">📋 提交至 Google 表單</button>
       <button class="btn btn-secondary" onclick="copyReport('${id}')">📄 複製報告</button>
-      <button class="btn btn-danger" onclick="clearReview('${id}')">🗑 清除</button>
+      <button class="btn btn-ghost" onclick="clearReview('${id}')">🧹 清除評核</button>
+      <button class="btn btn-danger" onclick="removeCoreMember('${id}')">🗑 刪除成員</button>
     </div>
   `;
 }
@@ -897,7 +1053,7 @@ function calcBonus() {
         <td>
           <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end;">
             <div style="width:48px;height:5px;background:var(--surface2);border-radius:3px;overflow:hidden;">
-              <div style="height:5px;width:${Math.min(r.realPct*3,100)}%;background:${BAR_COLORS[r.m.id]||'#888'};border-radius:3px;"></div>
+              <div style="height:5px;width:${Math.min(r.realPct*3,100)}%;background:${r.m.bar||BAR_COLORS[r.m.id]||'#888'};border-radius:3px;"></div>
             </div>
             <span>${r.realPct.toFixed(1)}%</span>
           </div>
@@ -944,7 +1100,7 @@ function calcBonus() {
 
   // Stacked bar
   const allForBar = [
-    ...coreRows.map(r => ({ name:r.m.name, pct:r.realPct, amt:r.amount, color:BAR_COLORS[r.m.id]||'#888' })),
+    ...coreRows.map(r => ({ name:r.m.name, pct:r.realPct, amt:r.amount, color:r.m.bar||BAR_COLORS[r.m.id]||'#888' })),
     ...supRows.map(sr => ({ name:sr.sm.name||'支援', pct:sr.realPct, amt:sr.amount, color:'#888780' })),
   ];
   document.getElementById('stackBar').innerHTML = allForBar.map(x =>
@@ -1086,13 +1242,21 @@ function copyReport(id) {
 
 // ── PERSIST ───────────────────────────────────────────────
 function saveState() {
-  try { localStorage.setItem('squadReview_v2', JSON.stringify(state)); } catch(e){}
+  try {
+    localStorage.setItem('squadReview_v2', JSON.stringify({
+      reviews: state.reviews,
+      cycle: state.cycle,
+      supportMembers: state.supportMembers,
+      members: MEMBERS,
+    }));
+  } catch(e){}
 }
 function loadState() {
   try {
     const saved = localStorage.getItem('squadReview_v2');
     if (!saved) return;
     const p = JSON.parse(saved);
+    if (Array.isArray(p.members) && p.members.length) MEMBERS = p.members;
     state.reviews = p.reviews || {};
     state.cycle   = p.cycle  || state.cycle;
     state.supportMembers = p.supportMembers || [];
