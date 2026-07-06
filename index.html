@@ -194,21 +194,13 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,'Noto Sans
       <button class="nav-btn active" id="navReview" onclick="switchView('review')">👤 績效評核</button>
       <button class="nav-btn" id="navBonus" onclick="switchView('bonus')">💰 分錢計算機</button>
     </div>
-    <select id="cycleSelect" onchange="updateCycle()" style="font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:inherit;color:var(--text);">
-      <option value="V1-2025Q2">V1 · 2025 Q2</option>
-      <option value="V2-2025Q3">V2 · 2025 Q3</option>
-      <option value="V1-2025Q4">V1 · 2025 Q4</option>
-      <option value="custom">自訂周期…</option>
-    </select>
-    <div id="customCycleWrap" style="display:none;align-items:center;gap:4px;">
-      <input id="customCycleInput" type="text" placeholder="例：V3-2026Q1"
-        style="font-size:12px;padding:5px 10px;border:1px solid var(--purple);border-radius:6px;font-family:inherit;color:var(--text);background:var(--surface);width:130px;outline:none;"
-        onkeydown="if(event.key==='Enter')confirmCustomCycle();if(event.key==='Escape')cancelCustomCycle();">
-      <button onclick="confirmCustomCycle()" style="font-size:12px;padding:5px 10px;border-radius:6px;border:none;background:var(--purple);color:#fff;cursor:pointer;font-family:inherit;font-weight:600;">確認</button>
-      <button onclick="cancelCustomCycle()" style="font-size:12px;padding:5px 8px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-sub);cursor:pointer;font-family:inherit;">✕</button>
+    <div style="display:flex;align-items:center;gap:4px;">
+      <button onclick="stepMonth(-1)" title="上一個月" style="font-size:12px;padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-sub);cursor:pointer;font-family:inherit;">◀</button>
+      <select id="monthSelect" onchange="onMonthSelect()" title="切換考核月份（● 表示該月已有紀錄）" style="font-size:12px;padding:5px 10px;border:1px solid var(--border);border-radius:6px;background:var(--surface);font-family:inherit;color:var(--text);"></select>
+      <button onclick="stepMonth(1)" title="下一個月" style="font-size:12px;padding:5px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-sub);cursor:pointer;font-family:inherit;">▶</button>
     </div>
-    <button onclick="resetAll()" title="清除所有評核資料並移除支援成員，重新開始" style="font-size:12px;font-weight:600;padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-sub);cursor:pointer;font-family:inherit;transition:all .12s;" onmouseover="this.style.background='var(--red-bg)';this.style.color='var(--red)';this.style.borderColor='var(--red-bg)';" onmouseout="this.style.background='var(--surface)';this.style.color='var(--text-sub)';this.style.borderColor='var(--border)';">🔄 重新開始</button>
-    <span class="cycle-badge" id="cycleBadge">V1 · 2025 Q2</span>
+    <button onclick="resetAll()" title="清空目前月份的評核資料與支援成員（其他月份不受影響）" style="font-size:12px;font-weight:600;padding:5px 12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-sub);cursor:pointer;font-family:inherit;transition:all .12s;" onmouseover="this.style.background='var(--red-bg)';this.style.color='var(--red)';this.style.borderColor='var(--red-bg)';" onmouseout="this.style.background='var(--surface)';this.style.color='var(--text-sub)';this.style.borderColor='var(--border)';">🔄 重新開始</button>
+    <span class="cycle-badge" id="cycleBadge"></span>
   </div>
 </div>
 
@@ -436,18 +428,60 @@ const BAR_COLORS = {
   pm:'#185FA5', devops:'#3B6D11', support:'#888780'
 };
 
+// ── MONTH HELPERS（月份制：YYYYMM，例 202606）──────────────
+function defaultMonth() {
+  const d = new Date();
+  return String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0');
+}
+function fmtMonth(m) {
+  return (m && m.length === 6) ? m.slice(0, 4) + '/' + m.slice(4) : (m || '—');
+}
+function addMonths(m, delta) {
+  let y = parseInt(m.slice(0, 4), 10);
+  let mo = parseInt(m.slice(4), 10) - 1 + delta;
+  y += Math.floor(mo / 12);
+  mo = ((mo % 12) + 12) % 12;
+  return String(y) + String(mo + 1).padStart(2, '0');
+}
+
 // ── STATE ──────────────────────────────────────────────────
 let state = {
-  cycle: 'V1-2025Q2',
+  month: defaultMonth(),   // 目前考核月份（YYYYMM）
   current: null,
-  reviews: {},
-  supportMembers: [],
+  reviewsByMonth: {},      // { '202606': { memberId: {dims,kpis,overallComment} } }
+  supportByMonth: {},      // { '202606': [ {id,name} ] }
 };
+
+// 取得目前月份的評核資料 / 支援成員（不存在時自動建立）
+function curReviews() {
+  if (!state.reviewsByMonth[state.month]) state.reviewsByMonth[state.month] = {};
+  return state.reviewsByMonth[state.month];
+}
+function curSupport() {
+  if (!state.supportByMonth[state.month]) state.supportByMonth[state.month] = [];
+  return state.supportByMonth[state.month];
+}
+function monthHasData(m) {
+  const rv = state.reviewsByMonth[m] || {};
+  const hasReview = Object.keys(rv).some(id => {
+    const r = rv[id] || {};
+    return Object.keys(r.dims || {}).length > 0
+        || Object.values(r.kpis || {}).some(v => v)
+        || (r.overallComment || '').trim().length > 0;
+  });
+  return hasReview || (state.supportByMonth[m] || []).length > 0;
+}
 
 // ── INIT ──────────────────────────────────────────────────
 function init() {
   loadState();
+  renderMonthSelect();
+  document.getElementById('cycleBadge').textContent = fmtMonth(state.month);
   renderSidebar();
+  if (state._migrated) {
+    delete state._migrated;
+    showToast('📦', '舊的季度紀錄已全數歸入 ' + fmtMonth('202606'));
+  }
 }
 
 // ── VIEW SWITCH ───────────────────────────────────────────
@@ -460,51 +494,66 @@ function switchView(v) {
   if (isBonus) calcBonus();
 }
 
-// ── CYCLE ────────────────────────────────────────────────
-function updateCycle() {
-  const v = document.getElementById('cycleSelect').value;
-  if (v === 'custom') {
-    // Show inline editor
-    const wrap = document.getElementById('customCycleWrap');
-    const input = document.getElementById('customCycleInput');
-    wrap.style.display = 'flex';
-    input.value = '';
-    input.focus();
-  } else {
-    state.cycle = v;
-    document.getElementById('cycleBadge').textContent = v;
-    document.getElementById('customCycleWrap').style.display = 'none';
-    saveState();
+// ── MONTH（月份切換）─────────────────────────────────────
+function renderMonthSelect() {
+  const sel = document.getElementById('monthSelect');
+  if (!sel) return;
+  const nowM = defaultMonth();
+  // 選單範圍：最早 202606（或更早的資料月份）～ 下個月（或更晚的資料/所選月份）
+  let lo = '202606', hi = addMonths(nowM, 1);
+  const dataMonths = new Set([
+    ...Object.keys(state.reviewsByMonth || {}),
+    ...Object.keys(state.supportByMonth || {}),
+  ]);
+  dataMonths.forEach(m => { if (m < lo) lo = m; if (m > hi) hi = m; });
+  if (state.month < lo) lo = state.month;
+  if (state.month > hi) hi = state.month;
+
+  const opts = [];
+  let m = lo, guard = 0;
+  while (m <= hi && guard < 240) {
+    let label = fmtMonth(m);
+    if (m === nowM) label += '（本月）';
+    if (monthHasData(m)) label += ' ●';
+    opts.push(`<option value="${m}" ${m === state.month ? 'selected' : ''}>${label}</option>`);
+    m = addMonths(m, 1);
+    guard++;
   }
+  sel.innerHTML = opts.join('');
+  sel.value = state.month;
 }
 
-function confirmCustomCycle() {
-  const input = document.getElementById('customCycleInput');
-  const val = input.value.trim();
-  if (!val) { input.focus(); return; }
-  state.cycle = val;
-  document.getElementById('cycleBadge').textContent = val;
-  document.getElementById('customCycleWrap').style.display = 'none';
-  // Add as a selectable option so it persists in the dropdown
-  const sel = document.getElementById('cycleSelect');
-  let existing = Array.from(sel.options).find(o => o.value === val);
-  if (!existing) {
-    const opt = document.createElement('option');
-    opt.value = val; opt.textContent = val;
-    sel.insertBefore(opt, sel.options[sel.options.length - 1]);
-  }
-  sel.value = val;
+function onMonthSelect() {
+  setMonth(document.getElementById('monthSelect').value);
+}
+
+function stepMonth(delta) {
+  setMonth(addMonths(state.month, delta));
+}
+
+function setMonth(m) {
+  if (!m || m === state.month) { renderMonthSelect(); return; }
+  state.month = m;
+  document.getElementById('cycleBadge').textContent = fmtMonth(m);
   saveState();
-  showToast('✓', '考核周期已更新：' + val);
-}
-
-function cancelCustomCycle() {
-  document.getElementById('customCycleWrap').style.display = 'none';
-  // Revert select to current cycle
-  const sel = document.getElementById('cycleSelect');
-  const opt = Array.from(sel.options).find(o => o.value === state.cycle);
-  if (opt) sel.value = state.cycle;
-  else sel.value = 'V1-2025Q2';
+  renderMonthSelect();
+  renderSidebar();
+  // 依新月份重新渲染目前開啟的成員頁
+  if (state.current) {
+    if (MEMBERS.some(x => x.id === state.current)) {
+      renderCoreMain(state.current);
+    } else if (curSupport().some(x => x.id === state.current)) {
+      renderSupportMain(state.current);
+    } else {
+      // 該支援成員不在此月份名單中
+      state.current = null;
+      document.getElementById('mainContent').innerHTML =
+        `<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-title">選擇左側成員開始評核</div><div style="font-size:13px;">從側欄選擇要進行 1 on 1 的成員</div></div>`;
+      renderSidebar();
+    }
+  }
+  if (document.getElementById('bonusView').style.display !== 'none') calcBonus();
+  showToast('📅', '已切換至 ' + fmtMonth(m));
 }
 
 // ── SIDEBAR ───────────────────────────────────────────────
@@ -521,14 +570,14 @@ function renderSidebar() {
   // Support members
   const sl = document.getElementById('supportList');
   sl.innerHTML = '';
-  state.supportMembers.forEach(m => sl.appendChild(makeSupportItem(m)));
+  curSupport().forEach(m => sl.appendChild(makeSupportItem(m)));
 }
 
 function makeCoreItem(m) {
   const div = document.createElement('div');
   div.className = 'member-item' + (state.current === m.id ? ' active' : '');
   div.onclick = () => selectMember(m.id);
-  const r = state.reviews[m.id] || {};
+  const r = curReviews()[m.id] || {};
   const dimsDone = Object.keys(r.dims || {}).length;
   const allDone = dimsDone === DIMS.length;
   const score = calcScore(m.id);
@@ -552,7 +601,7 @@ function makeSupportItem(m) {
   div.onclick = () => selectSupportMember(m.id);
   const nm = m.name || '（未命名）';
   const initials = m.name ? m.name.slice(0,2).toUpperCase() : 'CX';
-  const r = state.reviews[m.id] || {};
+  const r = curReviews()[m.id] || {};
   const dimsDone = Object.keys(r.dims || {}).length;
   const score = calcScore(m.id);
   const grade = dimsDone > 0 ? scoreToGrade(score) : null;
@@ -574,14 +623,14 @@ function addSupportMember() {
   const name = prompt('請輸入支援成員姓名：');
   if (name === null) return;
   const id = 'cx_' + Date.now();
-  state.supportMembers.push({ id, name: name.trim() });
+  curSupport().push({ id, name: name.trim() });
   saveState();
   renderSidebar();
   showToast('➕', `已新增 ${name.trim() || '（未命名）'}`);
 }
 
 function renameSupportMember(id) {
-  const m = state.supportMembers.find(x => x.id === id);
+  const m = curSupport().find(x => x.id === id);
   if (!m) return;
   const name = prompt('請輸入新名稱：', m.name);
   if (name === null) return;
@@ -593,10 +642,10 @@ function renameSupportMember(id) {
 }
 
 function removeSupportMember(id) {
-  const m = state.supportMembers.find(x => x.id === id);
-  if (!confirm(`確定移除「${m?.name||'此成員'}」？`)) return;
-  state.supportMembers = state.supportMembers.filter(x => x.id !== id);
-  delete state.reviews[id];
+  const m = curSupport().find(x => x.id === id);
+  if (!confirm(`確定移除「${m?.name||'此成員'}」？（僅移除 ${fmtMonth(state.month)} 名單）`)) return;
+  state.supportByMonth[state.month] = curSupport().filter(x => x.id !== id);
+  delete curReviews()[id];
   if (state.current === id) {
     state.current = null;
     document.getElementById('mainContent').innerHTML = `<div class="empty-state"><div class="empty-icon">👤</div><div class="empty-title">選擇左側成員開始評核</div></div>`;
@@ -658,9 +707,9 @@ function saveMemberModal() {
 
 function removeCoreMember(id) {
   const m = MEMBERS.find(x => x.id === id);
-  if (!confirm(`確定刪除 Squad 成員「${m?.name || id}」？\n其評核資料也會一併刪除（此操作無法復原）。`)) return;
+  if (!confirm(`確定刪除 Squad 成員「${m?.name || id}」？\n其「所有月份」的評核資料也會一併刪除（此操作無法復原）。`)) return;
   MEMBERS = MEMBERS.filter(x => x.id !== id);
-  delete state.reviews[id];
+  Object.keys(state.reviewsByMonth).forEach(mon => { delete state.reviewsByMonth[mon][id]; });
   if (state.current === id) {
     state.current = null;
     document.getElementById('mainContent').innerHTML =
@@ -673,9 +722,10 @@ function removeCoreMember(id) {
 
 // ── GLOBAL RESET ──────────────────────────────────────────
 function resetAll() {
-  if (!confirm('確定要「重新開始」？\n\n• 清空所有成員的維度評分、KPI 與評語\n• 移除所有臨時支援成員\n• Squad 成員名單會保留（如需復原預設名單，請按取消後改用下方說明）\n\n此操作無法復原。')) return;
-  state.reviews = {};
-  state.supportMembers = [];
+  const mLabel = fmtMonth(state.month);
+  if (!confirm(`確定要「重新開始 ${mLabel}」？\n\n• 清空 ${mLabel} 所有成員的維度評分、KPI 與評語\n• 移除 ${mLabel} 的臨時支援成員\n• 其他月份的紀錄與 Squad 成員名單都會保留\n\n此操作無法復原。`)) return;
+  state.reviewsByMonth[state.month] = {};
+  state.supportByMonth[state.month] = [];
   state.current = null;
   saveState();
   renderSidebar();
@@ -689,9 +739,11 @@ function resetAll() {
 function restoreDefaultMembers() {
   if (!confirm('將 Squad 成員名單還原為預設 6 人？\n（不影響支援成員，但會清除目前名單上的評核資料）')) return;
   MEMBERS = JSON.parse(JSON.stringify(DEFAULT_MEMBERS));
-  // 清除已不存在成員的評核資料
-  const validIds = new Set([...MEMBERS.map(m=>m.id), ...state.supportMembers.map(s=>s.id)]);
-  Object.keys(state.reviews).forEach(k => { if (!validIds.has(k)) delete state.reviews[k]; });
+  // 清除各月份中已不存在成員的評核資料
+  Object.keys(state.reviewsByMonth).forEach(mon => {
+    const validIds = new Set([...MEMBERS.map(m=>m.id), ...(state.supportByMonth[mon]||[]).map(s=>s.id)]);
+    Object.keys(state.reviewsByMonth[mon]).forEach(k => { if (!validIds.has(k)) delete state.reviewsByMonth[mon][k]; });
+  });
   state.current = null;
   saveState();
   renderSidebar();
@@ -717,7 +769,7 @@ function selectSupportMember(id) {
 function renderCoreMain(id) {
   const m = MEMBERS.find(x => x.id === id);
   if (!m) return;
-  const r = state.reviews[id] || {};
+  const r = curReviews()[id] || {};
   const score = calcScore(id);
   const grade = scoreToGrade(score);
   const hasDims = Object.keys(r.dims || {}).length > 0;
@@ -734,7 +786,7 @@ function renderCoreMain(id) {
         <div class="mhdr-meta">
           <span class="meta-tag">${m.role}</span>
           <span class="meta-tag">基礎權重 ${m.weight}%</span>
-          <span class="meta-tag">周期：${state.cycle}</span>
+          <span class="meta-tag">月份：${fmtMonth(state.month)}</span>
         </div>
       </div>
       <div class="grade-preview">
@@ -840,9 +892,9 @@ function renderDimCard(d, memberId, r) {
 
 // ── SUPPORT MEMBER REVIEW PAGE ────────────────────────────
 function renderSupportMain(id) {
-  const m = state.supportMembers.find(x => x.id === id);
+  const m = curSupport().find(x => x.id === id);
   if (!m) return;
-  const r = state.reviews[id] || {};
+  const r = curReviews()[id] || {};
   const score = calcScore(id);
   const grade = scoreToGrade(score);
   const hasDims = Object.keys(r.dims||{}).length > 0;
@@ -860,7 +912,7 @@ function renderSupportMain(id) {
         <div class="mhdr-meta">
           <span class="meta-tag">臨時支援</span>
           <span class="meta-tag">預留池（2%）均分</span>
-          <span class="meta-tag">周期：${state.cycle}</span>
+          <span class="meta-tag">月份：${fmtMonth(state.month)}</span>
         </div>
       </div>
       <div class="grade-preview">
@@ -908,17 +960,17 @@ function renderSupportMain(id) {
 
 // ── INTERACTIONS ──────────────────────────────────────────
 function setDim(memberId, dimId, grade) {
-  if (!state.reviews[memberId]) state.reviews[memberId] = { dims:{}, kpis:{}, overallComment:'' };
-  const cur = state.reviews[memberId].dims[dimId];
-  if (cur === grade) delete state.reviews[memberId].dims[dimId];
-  else state.reviews[memberId].dims[dimId] = grade;
+  if (!curReviews()[memberId]) curReviews()[memberId] = { dims:{}, kpis:{}, overallComment:'' };
+  const cur = curReviews()[memberId].dims[dimId];
+  if (cur === grade) delete curReviews()[memberId].dims[dimId];
+  else curReviews()[memberId].dims[dimId] = grade;
   saveState();
   // Re-render to reflect changes
-  const isSupport = state.supportMembers.some(x => x.id === memberId);
+  const isSupport = curSupport().some(x => x.id === memberId);
   if (isSupport) renderSupportMain(memberId);
   else renderCoreMain(memberId);
   renderSidebar();
-  showToast('✓', `${DIMS.find(d=>d.id===dimId)?.label} → ${state.reviews[memberId]?.dims[dimId]||'取消'}`);
+  showToast('✓', `${DIMS.find(d=>d.id===dimId)?.label} → ${curReviews()[memberId]?.dims[dimId]||'取消'}`);
 }
 
 function showDesc(dimId, grade) {
@@ -929,7 +981,7 @@ function showDesc(dimId, grade) {
 function hideDesc(dimId, memberId) {
   const el = document.getElementById('desc_'+dimId);
   const d = DIMS.find(x => x.id === dimId);
-  const sel = (state.reviews[memberId]?.dims||{})[dimId];
+  const sel = (curReviews()[memberId]?.dims||{})[dimId];
   if (el) {
     if (sel) { el.textContent = d.descs[sel]; el.classList.add('show'); }
     else el.classList.remove('show');
@@ -937,23 +989,23 @@ function hideDesc(dimId, memberId) {
 }
 
 function setKpi(memberId, idx, grade) {
-  if (!state.reviews[memberId]) state.reviews[memberId] = { dims:{}, kpis:{}, overallComment:'' };
-  state.reviews[memberId].kpis = state.reviews[memberId].kpis || {};
-  state.reviews[memberId].kpis[idx] = grade;
+  if (!curReviews()[memberId]) curReviews()[memberId] = { dims:{}, kpis:{}, overallComment:'' };
+  curReviews()[memberId].kpis = curReviews()[memberId].kpis || {};
+  curReviews()[memberId].kpis[idx] = grade;
   saveState();
   showToast('✓', 'KPI 已更新');
 }
 
 function saveComment(memberId) {
-  if (!state.reviews[memberId]) state.reviews[memberId] = { dims:{}, kpis:{}, overallComment:'' };
-  state.reviews[memberId].overallComment = document.getElementById('commentArea')?.value || '';
+  if (!curReviews()[memberId]) curReviews()[memberId] = { dims:{}, kpis:{}, overallComment:'' };
+  curReviews()[memberId].overallComment = document.getElementById('commentArea')?.value || '';
   saveState();
 }
 
 function clearReview(id) {
   const m = MEMBERS.find(x=>x.id===id);
   if (!confirm(`確定清除 ${m?.name||id} 的評核資料？`)) return;
-  delete state.reviews[id];
+  delete curReviews()[id];
   saveState();
   renderSidebar();
   renderCoreMain(id);
@@ -962,7 +1014,7 @@ function clearReview(id) {
 
 // ── SCORE ─────────────────────────────────────────────────
 function calcScore(memberId) {
-  const r = state.reviews[memberId] || {};
+  const r = curReviews()[memberId] || {};
   let total = 0;
   DIMS.forEach(d => { total += (GRADE_SCORE[(r.dims||{})[d.id]]||0) * d.weight / 100; });
   return Math.round(total);
@@ -994,12 +1046,12 @@ function calcBonus() {
   document.getElementById('supPoolDisplay').textContent = 'NT$ ' + Math.round(supPool).toLocaleString();
 
   // Check for unrated members
-  const anyUnrated = MEMBERS.some(m => Object.keys(state.reviews[m.id]?.dims||{}).length < DIMS.length);
+  const anyUnrated = MEMBERS.some(m => Object.keys(curReviews()[m.id]?.dims||{}).length < DIMS.length);
   document.getElementById('warnBar').style.display = anyUnrated ? 'block' : 'none';
 
   // Core rows
   const coreRows = MEMBERS.map(m => {
-    const dimsDone = Object.keys(state.reviews[m.id]?.dims||{}).length;
+    const dimsDone = Object.keys(curReviews()[m.id]?.dims||{}).length;
     const grade = dimsDone > 0 ? scoreToGrade(calcScore(m.id)) : 'B';
     const coeff = GRADE_COEFF[grade];
     const adjPts = m.weight * coeff;
@@ -1012,15 +1064,15 @@ function calcBonus() {
   });
 
   // Support rows
-  const supMembers = state.supportMembers;
+  const supMembers = curSupport();
   const supTotalCoeff = supMembers.reduce((s,sm) => {
-    const dimsDone = Object.keys(state.reviews[sm.id]?.dims||{}).length;
+    const dimsDone = Object.keys(curReviews()[sm.id]?.dims||{}).length;
     const grade = dimsDone > 0 ? scoreToGrade(calcScore(sm.id)) : 'B';
     return s + GRADE_COEFF[grade];
   }, 0) || 1;
 
   const supRows = supMembers.map(sm => {
-    const dimsDone = Object.keys(state.reviews[sm.id]?.dims||{}).length;
+    const dimsDone = Object.keys(curReviews()[sm.id]?.dims||{}).length;
     const grade = dimsDone > 0 ? scoreToGrade(calcScore(sm.id)) : 'B';
     const coeff = GRADE_COEFF[grade];
     const amount = (coeff / supTotalCoeff) * supPool;
@@ -1120,13 +1172,13 @@ function copyBonusReport() {
   const profit = parseFloat(document.getElementById('netProfit').value)||0;
   const rate   = parseFloat(document.getElementById('bonusRate').value)||0;
   const totalPool = profit * rate / 100;
-  let txt = `【China API Squad 分錢報告】\n考核周期：${state.cycle}\n項目淨利潤：NT$ ${Math.round(profit).toLocaleString()}\n分配比例：${rate}%　獎金池：NT$ ${Math.round(totalPool).toLocaleString()}\n\n`;
+  let txt = `【China API Squad 分錢報告】\n考核月份：${state.month}\n項目淨利潤：NT$ ${Math.round(profit).toLocaleString()}\n分配比例：${rate}%　獎金池：NT$ ${Math.round(totalPool).toLocaleString()}\n\n`;
   txt += `${'姓名'.padEnd(10)}${'績效'.padEnd(5)}${'係數'.padEnd(6)}${'佔比'.padEnd(8)}分得金額\n` + '─'.repeat(48) + '\n';
   const SUP_PCT = 2;
   const supPool  = totalPool * SUP_PCT / 100;
   const mainPool = totalPool - supPool;
   const coreRows = MEMBERS.map(m => {
-    const d = Object.keys(state.reviews[m.id]?.dims||{}).length;
+    const d = Object.keys(curReviews()[m.id]?.dims||{}).length;
     const g = d>0 ? scoreToGrade(calcScore(m.id)) : 'B';
     return { name:m.name, g, coeff:GRADE_COEFF[g], adjPts:m.weight*GRADE_COEFF[g] };
   });
@@ -1136,7 +1188,7 @@ function copyBonusReport() {
     const amt = totalAdj>0 ? (r.adjPts/totalAdj)*mainPool : 0;
     txt += `${r.name.padEnd(9)} ${r.g.padEnd(4)} ×${r.coeff}   ${pct.toFixed(1).padEnd(7)}NT$ ${Math.round(amt).toLocaleString()}\n`;
   });
-  state.supportMembers.forEach(sm => {
+  curSupport().forEach(sm => {
     txt += `${(sm.name||'支援').padEnd(9)} —    —      2.0%   NT$ (依績效均分)\n`;
   });
   navigator.clipboard.writeText(txt).then(()=>showToast('📄','分錢報告已複製'));
@@ -1144,8 +1196,8 @@ function copyBonusReport() {
 
 // ── MODAL / GFORM ─────────────────────────────────────────
 function openModal(id) {
-  const m = MEMBERS.find(x=>x.id===id) || state.supportMembers.find(x=>x.id===id);
-  const r = state.reviews[id] || {};
+  const m = MEMBERS.find(x=>x.id===id) || curSupport().find(x=>x.id===id);
+  const r = curReviews()[id] || {};
   const score = calcScore(id);
   const grade = scoreToGrade(score);
   const coeff = GRADE_COEFF[grade];
@@ -1155,7 +1207,7 @@ function openModal(id) {
   const role = m?.role || '臨時支援';
 
   document.getElementById('resultPreview').innerHTML = [
-    ['考核周期', state.cycle], ['姓名', nm], ['角色', role],
+    ['考核月份', state.month], ['姓名', nm], ['角色', role],
     ['加權總分', score+' 分'], ['績效等級', grade], ['獎金係數', '×'+coeff],
     ['各維度', dimsStr], ['KPI', kpisStr], ['評語', r.overallComment||'（無）'],
   ].map(([k,v])=>`<div class="rrow"><span class="rkey">${k}</span><span class="rval" style="text-align:right;max-width:280px;font-size:11px;">${v}</span></div>`).join('');
@@ -1172,7 +1224,7 @@ function openModal(id) {
     comment: 'entry.769338997',
   };
   const fields = [
-    {key:'cycle',label:'考核周期',val:state.cycle},
+    {key:'cycle',label:'考核月份',val:state.month},
     {key:'name',label:'姓名',val:nm},
     {key:'role',label:'角色',val:role},
     {key:'score',label:'加權總分',val:score},
@@ -1200,14 +1252,14 @@ function submitToGForm() {
   const url = document.getElementById('gformUrl').value.trim();
   if (!url) { alert('請填入 Google Form URL'); return; }
   const id = document.getElementById('modalOverlay').dataset.memberId;
-  const r = state.reviews[id] || {};
-  const m = MEMBERS.find(x=>x.id===id) || state.supportMembers.find(x=>x.id===id);
+  const r = curReviews()[id] || {};
+  const m = MEMBERS.find(x=>x.id===id) || curSupport().find(x=>x.id===id);
   const score = calcScore(id);
   const grade = scoreToGrade(score);
   const kpisStr = (ROLE_KPI[id]||ROLE_KPI.support).map((k,i)=>`${k}:${(r.kpis||{})[i]||'—'}`).join(' | ');
   const dimsStr = DIMS.map(d=>`${d.label}:${(r.dims||{})[d.id]||'—'}`).join(' | ');
   const dataMap = {
-    cycle:state.cycle, name:m?.name||id, role:m?.role||'臨時支援',
+    cycle:state.month, name:m?.name||id, role:m?.role||'臨時支援',
     score, grade, coeff:GRADE_COEFF[grade], dims:dimsStr, kpis:kpisStr, comment:r.overallComment||''
   };
   const params = new URLSearchParams();
@@ -1228,10 +1280,10 @@ function copyToClipboard() {
 }
 
 function copyReport(id) {
-  const m = MEMBERS.find(x=>x.id===id) || state.supportMembers.find(x=>x.id===id);
-  const r = state.reviews[id] || {};
+  const m = MEMBERS.find(x=>x.id===id) || curSupport().find(x=>x.id===id);
+  const r = curReviews()[id] || {};
   const score = calcScore(id); const grade = scoreToGrade(score);
-  let txt = `【China API Squad 績效考核報告】\n考核周期：${state.cycle}\n姓名：${m?.name||id}　角色：${m?.role||'臨時支援'}\n\n`;
+  let txt = `【China API Squad 績效考核報告】\n考核月份：${state.month}\n姓名：${m?.name||id}　角色：${m?.role||'臨時支援'}\n\n`;
   txt += `▌ 結果\n加權總分：${score}　等級：${grade}　係數：×${GRADE_COEFF[grade]}\n\n▌ 各維度\n`;
   DIMS.forEach(d=>{ const g=(r.dims||{})[d.id]||'—'; txt+=`  ${d.label}（${d.weight}%）：${g}\n`; });
   txt += `\n▌ KPI\n`;
@@ -1243,33 +1295,44 @@ function copyReport(id) {
 // ── PERSIST ───────────────────────────────────────────────
 function saveState() {
   try {
-    localStorage.setItem('squadReview_v2', JSON.stringify({
-      reviews: state.reviews,
-      cycle: state.cycle,
-      supportMembers: state.supportMembers,
+    // 只保存有內容的月份，避免空殼月份累積
+    const rbm = {}, sbm = {};
+    Object.keys(state.reviewsByMonth).forEach(m => {
+      if (Object.keys(state.reviewsByMonth[m] || {}).length > 0) rbm[m] = state.reviewsByMonth[m];
+    });
+    Object.keys(state.supportByMonth).forEach(m => {
+      if ((state.supportByMonth[m] || []).length > 0) sbm[m] = state.supportByMonth[m];
+    });
+    localStorage.setItem('squadReview_v3', JSON.stringify({
+      reviewsByMonth: rbm,
+      supportByMonth: sbm,
+      month: state.month,
       members: MEMBERS,
     }));
   } catch(e){}
 }
 function loadState() {
   try {
-    const saved = localStorage.getItem('squadReview_v2');
-    if (!saved) return;
-    const p = JSON.parse(saved);
-    if (Array.isArray(p.members) && p.members.length) MEMBERS = p.members;
-    state.reviews = p.reviews || {};
-    state.cycle   = p.cycle  || state.cycle;
-    state.supportMembers = p.supportMembers || [];
-    const sel = document.getElementById('cycleSelect');
-    // Restore custom cycle option if needed
-    const existingOpt = Array.from(sel.options).find(o=>o.value===state.cycle);
-    if (!existingOpt && state.cycle) {
-      const newOpt = document.createElement('option');
-      newOpt.value = state.cycle; newOpt.textContent = state.cycle;
-      sel.insertBefore(newOpt, sel.options[sel.options.length - 1]);
+    const saved = localStorage.getItem('squadReview_v3');
+    if (saved) {
+      const p = JSON.parse(saved);
+      if (Array.isArray(p.members) && p.members.length) MEMBERS = p.members;
+      state.reviewsByMonth = p.reviewsByMonth || {};
+      state.supportByMonth = p.supportByMonth || {};
+      state.month = p.month || defaultMonth();
+      return;
     }
-    sel.value = state.cycle;
-    document.getElementById('cycleBadge').textContent = state.cycle;
+    // ── 舊版（季度制 squadReview_v2）一次性遷移：既有紀錄全數歸入 202606 ──
+    const legacy = localStorage.getItem('squadReview_v2');
+    if (legacy) {
+      const p = JSON.parse(legacy);
+      if (Array.isArray(p.members) && p.members.length) MEMBERS = p.members;
+      state.reviewsByMonth = { '202606': p.reviews || {} };
+      state.supportByMonth = { '202606': p.supportMembers || [] };
+      state.month = '202606';
+      state._migrated = true;
+      saveState(); // 立即以新格式存檔；原 squadReview_v2 保留於 localStorage 作備份、不再更新
+    }
   } catch(e){}
 }
 
